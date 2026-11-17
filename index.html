@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>لوحة تحكم الإدارة | نظام الحضور الذكي بالرقعة الجغرافية</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Cairo', 'sans-serif'] },
+                    colors: { dark: { 950: '#06070a', 900: '#0b0d13', 800: '#131620', 700: '#1c202e', 600: '#272c3f' } }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #0b0d13; color: #f1f5f9; font-family: 'Cairo', sans-serif; }
+        .glass-card { background: rgba(19, 22, 32, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
+        #geofence-map { height: 420px; width: 100%; border-radius: 1rem; z-index: 10; }
+        #live-map { height: 540px; width: 100%; border-radius: 1rem; z-index: 10; }
+        .emp-pin { width: 34px; height: 34px; border-radius: 50%; border: 3px solid #fff; color: #fff; font-weight: 800; font-size: 14px; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,.5); }
+        .vtx { width: 22px; height: 22px; border-radius: 50%; background: #10b981; border: 2px solid #fff; color: #fff; font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 6px rgba(0,0,0,.6); cursor: grab; }
+        .leaflet-popup-content { font-family: 'Cairo', sans-serif; direction: rtl; text-align: right; color: #0b0d13; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <div id="toast-container" class="fixed bottom-5 left-5 z-50 flex flex-col gap-2.5 pointer-events-none"></div>
+
+    <!-- Header -->
+    <header class="sticky top-0 z-40 glass-card border-b border-white/10 px-4 py-3.5">
+        <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center gap-3.5">
+                <div class="w-11 h-11 rounded-2xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white text-xl shadow-lg">
+                    <i class="fa-solid fa-shield-halved"></i>
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <h1 class="text-lg font-extrabold text-white">لوحة تحكم الإدارة</h1>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-400 border border-cyan-500/30">GEO-ATTENDANCE</span>
+                    </div>
+                    <div class="flex items-center gap-2 text-xs mt-0.5">
+                        <span id="fb-conn-dot" class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+                        <span id="fb-conn-text" class="text-slate-400">جاري الاتصال بـ Firebase...</span>
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="hidden sm:block text-left bg-dark-950 px-4 py-1.5 rounded-xl border border-white/10">
+                    <div id="live-clock" class="text-sm font-bold font-mono text-cyan-400">00:00:00</div>
+                    <div id="live-date" class="text-[11px] text-slate-400">----/--/--</div>
+                </div>
+                <button onclick="openEmployeeModal()" class="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-xs sm:text-sm font-bold shadow-lg flex items-center gap-2">
+                    <i class="fa-solid fa-user-plus"></i><span>إضافة موظف</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 py-6 space-y-6">
+        <!-- Tabs -->
+        <div class="flex flex-wrap items-center gap-2 border-b border-white/10 pb-4">
+            <button onclick="switchTab('dashboard')" id="nav-dashboard" class="tab-btn px-4 py-2.5 rounded-xl text-sm font-bold bg-dark-700 text-cyan-400 border border-cyan-500/30 flex items-center gap-2">
+                <i class="fa-solid fa-chart-line"></i><span>المراقبة الفورية (Live)</span>
+            </button>
+            <button onclick="switchTab('live')" id="nav-live" class="tab-btn px-4 py-2.5 rounded-xl text-sm font-bold text-slate-400 hover:bg-dark-800 hover:text-white flex items-center gap-2">
+                <i class="fa-solid fa-street-view text-rose-400"></i><span>مواقع الموظفين</span>
+            </button>
+            <button onclick="switchTab('geofence')" id="nav-geofence" class="tab-btn px-4 py-2.5 rounded-xl text-sm font-bold text-slate-400 hover:bg-dark-800 hover:text-white flex items-center gap-2">
+                <i class="fa-solid fa-location-crosshairs text-emerald-400"></i><span>الرقعة الجغرافية (GPS)</span>
+            </button>
+            <button onclick="switchTab('employees')" id="nav-employees" class="tab-btn px-4 py-2.5 rounded-xl text-sm font-bold text-slate-400 hover:bg-dark-800 hover:text-white flex items-center gap-2">
+                <i class="fa-solid fa-users"></i><span>حسابات الموظفين</span>
+            </button>
+            <button onclick="switchTab('logs')" id="nav-logs" class="tab-btn px-4 py-2.5 rounded-xl text-sm font-bold text-slate-400 hover:bg-dark-800 hover:text-white flex items-center gap-2">
+                <i class="fa-solid fa-table-list"></i><span>سجل الحضور الكامل</span>
+            </button>
+            <button onclick="switchTab('settings')" id="nav-settings" class="tab-btn px-4 py-2.5 rounded-xl text-sm font-bold text-slate-400 hover:bg-dark-800 hover:text-white flex items-center gap-2">
+                <i class="fa-solid fa-database text-amber-400"></i><span>إعدادات Firebase</span>
+            </button>
+        </div>
+
+        <!-- TAB 1: DASHBOARD -->
+        <section id="section-dashboard" class="space-y-6">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div class="glass-card p-5 rounded-2xl border-r-4 border-r-cyan-500 flex items-center justify-between">
+                    <div><p class="text-xs text-slate-400">إجمالي الموظفين</p><h3 id="stat-total" class="text-3xl font-extrabold text-white mt-1">0</h3></div>
+                    <div class="w-12 h-12 rounded-2xl bg-cyan-500/10 text-cyan-400 flex items-center justify-center text-xl"><i class="fa-solid fa-id-card-clip"></i></div>
+                </div>
+                <div class="glass-card p-5 rounded-2xl border-r-4 border-r-emerald-500 flex items-center justify-between">
+                    <div><p class="text-xs text-slate-400">الحاضرون اليوم</p><h3 id="stat-present" class="text-3xl font-extrabold text-emerald-400 mt-1">0</h3></div>
+                    <div class="w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center text-xl"><i class="fa-solid fa-user-check"></i></div>
+                </div>
+                <div class="glass-card p-5 rounded-2xl border-r-4 border-r-amber-500 flex items-center justify-between">
+                    <div><p class="text-xs text-slate-400">المتأخرون اليوم</p><h3 id="stat-late" class="text-3xl font-extrabold text-amber-400 mt-1">0</h3></div>
+                    <div class="w-12 h-12 rounded-2xl bg-amber-500/10 text-amber-400 flex items-center justify-center text-xl"><i class="fa-solid fa-clock"></i></div>
+                </div>
+                <div class="glass-card p-5 rounded-2xl border-r-4 border-r-rose-500 flex items-center justify-between">
+                    <div><p class="text-xs text-slate-400">غائب / خارج النطاق</p><h3 id="stat-absent" class="text-3xl font-extrabold text-rose-400 mt-1">0</h3></div>
+                    <div class="w-12 h-12 rounded-2xl bg-rose-500/10 text-rose-400 flex items-center justify-center text-xl"><i class="fa-solid fa-user-clock"></i></div>
+                </div>
+            </div>
+
+            <div class="glass-card rounded-2xl p-6">
+                <div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+                    <div class="flex items-center gap-2.5">
+                        <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping"></span>
+                        <h2 class="text-base font-bold text-white">حركة الحضور التلقائي المباشرة لليوم</h2>
+                    </div>
+                    <span id="today-badge" class="text-xs font-mono bg-dark-950 text-cyan-400 px-3 py-1.5 rounded-xl border border-white/10"></span>
+                </div>
+                <div id="live-attendance-feed" class="space-y-3"></div>
+            </div>
+        </section>
+
+        <!-- TAB: LIVE LOCATIONS -->
+        <section id="section-live" class="hidden space-y-6">
+            <div class="glass-card rounded-2xl p-6">
+                <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                    <div>
+                        <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                            <i class="fa-solid fa-street-view text-rose-400"></i><span>المواقع الفعلية للموظفين</span>
+                        </h2>
+                        <p id="live-summary" class="text-xs text-slate-400 mt-1"></p>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-3 text-[11px] text-slate-300">
+                        <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full" style="background:#10b981"></span>داخل الرقعة</span>
+                        <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full" style="background:#ef4444"></span>خارج الرقعة</span>
+                        <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full" style="background:#64748b"></span>غير متصل</span>
+                        <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full" style="background:#a855f7"></span>موقع وهمي</span>
+                        <button onclick="fitAllEmployees()" class="px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-1.5">
+                            <i class="fa-solid fa-expand"></i><span>عرض الكل</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    <div class="lg:col-span-2"><div id="live-map" class="border border-white/10 shadow-xl"></div></div>
+                    <div id="live-list" class="space-y-2 max-h-[540px] overflow-y-auto pr-1"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB: GEOFENCE -->
+        <section id="section-geofence" class="hidden space-y-6">
+            <div class="glass-card rounded-2xl p-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="space-y-4">
+                    <div class="flex items-center justify-between">
+                        <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                            <i class="fa-solid fa-map-location-dot text-emerald-400"></i>
+                            <span>تحديد الرقعة الجغرافية للدوام</span>
+                        </h2>
+                        <button type="button" onclick="getCurrentBrowserLocation()" class="px-3 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold flex items-center gap-1.5">
+                            <i class="fa-solid fa-location-arrow"></i><span>موقعي الحالي</span>
+                        </button>
+                    </div>
+
+                    <div class="flex flex-wrap gap-2">
+                        <button type="button" id="mode-polygon" onclick="setGeoMode('polygon')" class="px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5"><i class="fa-solid fa-draw-polygon"></i><span>مضلع (يطابق الجدران)</span></button>
+                        <button type="button" id="mode-circle" onclick="setGeoMode('circle')" class="px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5"><i class="fa-regular fa-circle"></i><span>دائرة</span></button>
+                        <button type="button" onclick="undoPoint()" class="px-3 py-1.5 rounded-xl bg-dark-700 text-slate-200 text-xs font-bold"><i class="fa-solid fa-rotate-left"></i> تراجع</button>
+                        <button type="button" onclick="clearPolygon()" class="px-3 py-1.5 rounded-xl bg-rose-500/15 text-rose-400 text-xs font-bold"><i class="fa-solid fa-eraser"></i> مسح</button>
+                    </div>
+                    <p id="geo-hint" class="text-xs text-slate-400"></p>
+
+                    <form onsubmit="saveGeofence(event)" class="space-y-4">
+                        <div id="circle-fields" class="space-y-4">
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs text-slate-400 mb-1">خط العرض (Latitude)</label>
+                                    <input type="number" step="any" id="geo-lat" class="w-full bg-dark-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-mono">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-slate-400 mb-1">خط الطول (Longitude)</label>
+                                    <input type="number" step="any" id="geo-lng" class="w-full bg-dark-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-mono">
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">نصف القطر المسموح (بالمتر)</label>
+                                <input type="number" id="geo-radius" min="20" max="5000" value="100" oninput="updateMapCircle()" class="w-full bg-dark-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-emerald-400 font-bold font-mono">
+                            </div>
+                        </div>
+
+                        <div id="polygon-fields" class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">هامش التسامح لخطأ GPS (م)</label>
+                                <input type="number" id="geo-tol" min="0" max="50" value="3" class="w-full bg-dark-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-emerald-400 font-bold font-mono">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-slate-400 mb-1">عدد النقاط</label>
+                                <div id="poly-count" class="w-full bg-dark-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-mono">0</div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs text-slate-400 mb-1">اسم الموقع / الفرع</label>
+                            <input type="text" id="geo-name" value="المقر الرئيسي" required class="w-full bg-dark-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white">
+                        </div>
+                        <button type="submit" class="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-cyan-600 text-white text-sm font-bold shadow-lg flex items-center justify-center gap-2">
+                            <i class="fa-solid fa-floppy-disk"></i><span>حفظ وتعميم الرقعة الجغرافية على الموظفين</span>
+                        </button>
+                    </form>
+                </div>
+                <div class="flex flex-col justify-center">
+                    <div id="geofence-map" class="border border-white/10 shadow-xl"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB: EMPLOYEES -->
+        <section id="section-employees" class="hidden space-y-6">
+            <div class="glass-card rounded-2xl p-6">
+                <div class="flex flex-wrap items-center justify-between gap-4 mb-5">
+                    <h2 class="text-lg font-bold text-white">إدارة حسابات الموظفين</h2>
+                    <input type="text" id="emp-search" oninput="renderEmployeesTable()" placeholder="بحث بالاسم أو الرمز..." class="w-full sm:w-64 bg-dark-950 border border-white/10 rounded-xl py-2 px-3 text-sm text-white">
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-right border-collapse">
+                        <thead>
+                            <tr class="border-b border-white/10 text-xs text-slate-400 bg-dark-950/60">
+                                <th class="py-3.5 px-4">الرمز</th><th class="py-3.5 px-4">الاسم</th><th class="py-3.5 px-4">القسم والوظيفة</th><th class="py-3.5 px-4">بداية الدوام</th><th class="py-3.5 px-4">كلمة المرور</th><th class="py-3.5 px-4 text-center">إجراءات</th>
+                            </tr>
+                        </thead>
+                        <tbody id="employees-tbody" class="divide-y divide-white/5 text-sm"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB: LOGS -->
+        <section id="section-logs" class="hidden space-y-6">
+            <div class="glass-card rounded-2xl p-6">
+                <div class="flex flex-wrap items-end justify-between gap-4 mb-6 pb-4 border-b border-white/10">
+                    <h2 class="text-lg font-bold text-white">سجل الحضور والانصراف التفصيلي</h2>
+                    <div class="flex flex-wrap items-center gap-3">
+                        <input type="date" id="filter-date" onchange="renderLogsTable()" class="bg-dark-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white">
+                        <select id="filter-emp" onchange="renderLogsTable()" class="bg-dark-950 border border-white/10 rounded-xl px-3 py-2 text-xs text-white"><option value="all">جميع الموظفين</option></select>
+                        <button onclick="clearLogFilters()" class="px-3 py-2 rounded-xl bg-dark-700 text-xs text-slate-200">الكل</button>
+                        <button onclick="exportLogsToCSV()" class="px-3.5 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold">تصدير CSV</button>
+                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-right border-collapse">
+                        <thead>
+                            <tr class="border-b border-white/10 text-xs text-slate-400 bg-dark-950/60">
+                                <th class="py-3.5 px-4">التاريخ</th><th class="py-3.5 px-4">الموظف</th><th class="py-3.5 px-4">الحضور</th><th class="py-3.5 px-4">الانصراف</th><th class="py-3.5 px-4">المدة</th><th class="py-3.5 px-4">الحالة</th><th class="py-3.5 px-4 text-center">حذف</th>
+                            </tr>
+                        </thead>
+                        <tbody id="logs-tbody" class="divide-y divide-white/5 text-sm"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB: SETTINGS -->
+        <section id="section-settings" class="hidden space-y-6">
+            <div class="glass-card rounded-2xl p-6 space-y-4">
+                <h3 class="text-base font-bold text-white">تهيئة حسابات موظفين تجريبية</h3>
+                <button onclick="seedSampleEmployees()" class="px-5 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-cyan-600 text-white text-sm font-bold">إضافة موظفين تجريبيين (EMP101 - EMP103)</button>
+            </div>
+        </section>
+    </main>
+
+    <!-- Employee Modal -->
+    <div id="emp-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-dark-800 border border-white/10 rounded-3xl max-w-md w-full p-6">
+            <div class="flex items-center justify-between mb-4 pb-3 border-b border-white/10">
+                <h3 id="modal-title" class="text-base font-bold text-white">إضافة موظف جديد</h3>
+                <button onclick="closeEmployeeModal()" class="w-8 h-8 rounded-xl bg-dark-700 text-slate-400"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <form onsubmit="handleSaveEmployee(event)" class="space-y-3.5">
+                <div class="grid grid-cols-2 gap-3">
+                    <div><label class="block text-xs text-slate-400 mb-1">الرمز الوظيفي</label><input type="text" id="form-empId" required class="w-full bg-dark-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-mono"></div>
+                    <div><label class="block text-xs text-slate-400 mb-1">موعد بدء الدوام</label><input type="time" id="form-shift" required value="08:30" class="w-full bg-dark-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-mono"></div>
+                </div>
+                <div><label class="block text-xs text-slate-400 mb-1">الاسم الكامل</label><input type="text" id="form-name" required class="w-full bg-dark-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white"></div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div><label class="block text-xs text-slate-400 mb-1">القسم</label><input type="text" id="form-dept" required class="w-full bg-dark-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white"></div>
+                    <div><label class="block text-xs text-slate-400 mb-1">المسمى الوظيفي</label><input type="text" id="form-job" required class="w-full bg-dark-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white"></div>
+                </div>
+                <div><label class="block text-xs text-slate-400 mb-1">كلمة المرور</label><input type="text" id="form-pass" required class="w-full bg-dark-950 border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-mono"></div>
+                <div class="pt-3 flex justify-end gap-2">
+                    <button type="button" onclick="closeEmployeeModal()" class="px-4 py-2 rounded-xl bg-dark-700 text-xs">إلغاء</button>
+                    <button type="submit" class="px-5 py-2 rounded-xl bg-cyan-600 text-white text-xs font-bold">حفظ</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Employee Profile Modal -->
+    <div id="profile-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-dark-800 border border-white/10 rounded-3xl max-w-2xl w-full p-6 max-h-[90vh] flex flex-col">
+            <div class="flex items-center justify-between mb-4 pb-3 border-b border-white/10">
+                <h3 class="text-base font-bold text-white flex items-center gap-2"><i class="fa-solid fa-id-badge text-cyan-400"></i><span id="profile-title">بروفايل الموظف</span></h3>
+                <button onclick="closeProfile()" class="w-8 h-8 rounded-xl bg-dark-700 text-slate-400"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div id="profile-body" class="overflow-y-auto space-y-3 pr-1"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+        import { getDatabase, ref, set, update, remove, onValue } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDqkGBqFz-MY9HiqBrsF5hPMPfRsZR67VI",
+            authDomain: "bdbhdhdhd-4ad95.firebaseapp.com",
+            databaseURL: "https://bdbhdhdhd-4ad95-default-rtdb.firebaseio.com",
+            projectId: "bdbhdhdhd-4ad95",
+            storageBucket: "bdbhdhdhd-4ad95.firebasestorage.app",
+            messagingSenderId: "1585823000",
+            appId: "1:1585823000:web:5c523c97c6d0d76938f26d",
+            measurementId: "G-D6DJZ45P07"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        let employeesData = {};
+        let attendanceData = {};
+        let locationsData = {};
+        let geofenceData = null;
+        let map, marker, circle;
+        let liveMap, liveCircle, liveHq;
+        const liveMarkers = {};
+        let currentTab = 'dashboard';
+
+        const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        const toArr = (v) => Array.isArray(v) ? v.filter(Boolean) : Object.values(v || {});
+
+        const toSec = (t) => { const [h, m, x] = String(t).split(':').map(Number); return (h || 0) * 3600 + (m || 0) * 60 + (x || 0); };
+        const fmtDur = (d) => {
+            const h = Math.floor(d / 3600), m = Math.floor((d % 3600) / 60), x = d % 60;
+            return h > 0 ? `${h}س ${m}د` : (m > 0 ? `${m}د ${x}ث` : `${x}ث`);
+        };
+        // جلسات الموظف (دخول → خروج) داخل سجل يوم واحد، مرتبة حسب وقت الدخول
+        const sessionsOf = (r) => r && r.sessions
+            ? Object.values(r.sessions).filter(s => s && s.in).sort((a, b) => a.in.localeCompare(b.in))
+            : [];
+        // مدة جلسة بالثواني؛ الجلسة المفتوحة تُحسب حتى الآن إن كانت من اليوم
+        function sessSecs(s, isToday) {
+            const st = toSec(s.in);
+            if (s.out) return Math.max(0, toSec(s.out) - st);
+            if (!isToday) return 0;
+            const n = new Date();
+            return Math.max(0, n.getHours() * 3600 + n.getMinutes() * 60 + n.getSeconds() - st);
+        }
+
+        // المدة = مجموع الجلسات الفعلية (بدون فترات الغياب بين الدخول والخروج)
+        function calcDuration(r) {
+            let d = 0;
+            const ss = sessionsOf(r);
+            if (ss.length) ss.forEach(s => { if (s.out) d += Math.max(0, toSec(s.out) - toSec(s.in)); });
+            else if (r.checkIn && r.checkOut) d = toSec(r.checkOut) - toSec(r.checkIn);
+            return d > 0 ? fmtDur(d) : '—';
+        }
+
+        // ================= خريطة تحديد الرقعة (مضلع / دائرة) =================
+        let geoMode = 'polygon';
+        let polyPoints = [];          // [[lat,lng], ...]
+        let polyShape = null;
+        let vertexMarkers = [];
+
+        function initMap(lat = 32.5128, lng = 45.8182, radius = 100) {
+            if (map) return;
+            map = L.map('geofence-map', { doubleClickZoom: false }).setView([lat, lng], 18);
+            const street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' });
+            const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Esri' });
+            sat.addTo(map); // الصورة القمرية تُظهر جدران المبنى بوضوح
+            L.control.layers({ 'صورة قمرية': sat, 'خريطة شوارع': street }).addTo(map);
+
+            marker = L.marker([lat, lng], { draggable: true });
+            circle = L.circle([lat, lng], { color: '#10b981', fillColor: '#10b981', fillOpacity: 0.2, radius });
+
+            map.on('click', (e) => {
+                if (geoMode === 'polygon') { polyPoints.push([e.latlng.lat, e.latlng.lng]); redrawPolygon(); }
+                else setMapCoords(e.latlng.lat, e.latlng.lng);
+            });
+            marker.on('dragend', () => { const p = marker.getLatLng(); setMapCoords(p.lat, p.lng); });
+            setGeoMode(geoMode);
+        }
+
+        function setMapCoords(lat, lng) {
+            document.getElementById('geo-lat').value = lat.toFixed(6);
+            document.getElementById('geo-lng').value = lng.toFixed(6);
+            if (!map) return;
+            marker.setLatLng([lat, lng]);
+            circle.setLatLng([lat, lng]);
+            map.setView([lat, lng], Math.max(map.getZoom(), 18));
+        }
+
+        window.updateMapCircle = function() {
+            const r = Number(document.getElementById('geo-radius').value) || 100;
+            if (circle) circle.setRadius(r);
+        };
+
+        window.setGeoMode = function(m) {
+            geoMode = m;
+            const on = 'px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 bg-dark-700 text-cyan-400 border border-cyan-500/30';
+            const off = 'px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 text-slate-400 border border-white/10';
+            document.getElementById('mode-polygon').className = m === 'polygon' ? on : off;
+            document.getElementById('mode-circle').className = m === 'circle' ? on : off;
+            document.getElementById('circle-fields').classList.toggle('hidden', m !== 'circle');
+            document.getElementById('polygon-fields').classList.toggle('hidden', m !== 'polygon');
+            document.getElementById('geo-hint').textContent = m === 'polygon'
+                ? 'اضغط على زوايا المبنى بالترتيب (3 نقاط على الأقل). اسحب أي نقطة لتعديلها، وانقر بزر الفأرة الأيمن (أو اضغط مطولاً) على نقطة لحذفها. بدّل إلى الصورة القمرية لرؤية الجدران.'
+                : 'انقر على الخريطة أو اسحب العلامة لتحديد المركز، ثم اضبط نصف القطر.';
+            if (map) {
+                if (m === 'circle') { marker.addTo(map); circle.addTo(map); }
+                else { marker.remove(); circle.remove(); }
+                redrawPolygon();
+            } else {
+                document.getElementById('poly-count').textContent = polyPoints.length;
+            }
+        };
+
+        function redrawPolygon() {
+            document.getElementById('poly-count').textContent = polyPoints.length;
+            if (!map) return;
+            vertexMarkers.forEach(m => m.remove()); vertexMarkers = [];
+            if (polyShape) { polyShape.remove(); polyShape = null; }
+            if (geoMode !== 'polygon') return;
+            const style = { color: '#10b981', weight: 3, fillColor: '#10b981', fillOpacity: 0.2 };
+            if (polyPoints.length >= 3) polyShape = L.polygon(polyPoints, style).addTo(map);
+            else if (polyPoints.length === 2) polyShape = L.polyline(polyPoints, style).addTo(map);
+            polyPoints.forEach((p, i) => {
+                const m = L.marker(p, {
+                    draggable: true,
+                    icon: L.divIcon({ className: '', html: `<div class="vtx">${i + 1}</div>`, iconSize: [22, 22], iconAnchor: [11, 11] })
+                }).addTo(map);
+                m.on('drag', () => { const ll = m.getLatLng(); polyPoints[i] = [ll.lat, ll.lng]; if (polyShape) polyShape.setLatLngs(polyPoints); });
+                m.on('contextmenu', () => { polyPoints.splice(i, 1); redrawPolygon(); });
+                vertexMarkers.push(m);
+            });
+        }
+        window.undoPoint = () => { polyPoints.pop(); redrawPolygon(); };
+        window.clearPolygon = () => { polyPoints = []; redrawPolygon(); };
+
+        window.getCurrentBrowserLocation = function() {
+            if (!navigator.geolocation) return showToast("المتصفح لا يدعم تحديد الموقع", "error");
+            navigator.geolocation.getCurrentPosition((pos) => {
+                setMapCoords(pos.coords.latitude, pos.coords.longitude);
+                showToast("تم الانتقال إلى موقعك الحالي", "success");
+            }, () => showToast("يرجى السماح بالوصول للموقع في المتصفح", "error"));
+        };
+
+        onValue(ref(db, 'geofence'), (snap) => {
+            const val = snap.val();
+            geofenceData = val;
+            if (val) {
+                document.getElementById('geo-lat').value = val.lat;
+                document.getElementById('geo-lng').value = val.lng;
+                document.getElementById('geo-name').value = val.name || 'المقر الرئيسي';
+                if (val.type === 'polygon') {
+                    polyPoints = toArr(val.points).map(p => [p.lat, p.lng]);
+                    document.getElementById('geo-tol').value = val.tolerance ?? 3;
+                    geoMode = 'polygon';
+                } else {
+                    document.getElementById('geo-radius').value = val.radius;
+                    geoMode = 'circle';
+                }
+                if (map) { setMapCoords(val.lat, val.lng); updateMapCircle(); }
+                setGeoMode(geoMode);
+                drawLiveGeofence();
+            }
+        });
+
+        window.saveGeofence = async function(e) {
+            e.preventDefault();
+            const name = document.getElementById('geo-name').value.trim();
+            let geoObj;
+            if (geoMode === 'polygon') {
+                if (polyPoints.length < 3) return showToast("ارسم 3 نقاط على الأقل", "error");
+                const lat = polyPoints.reduce((s, p) => s + p[0], 0) / polyPoints.length;
+                const lng = polyPoints.reduce((s, p) => s + p[1], 0) / polyPoints.length;
+                // دائرة تقريبية تغطي المضلع لتوافق النسخ القديمة من التطبيق
+                const c = L.latLng(lat, lng);
+                const radius = Math.ceil(Math.max(...polyPoints.map(p => c.distanceTo(L.latLng(p[0], p[1])))));
+                geoObj = {
+                    type: 'polygon', name, lat, lng, radius,
+                    tolerance: Math.max(0, parseFloat(document.getElementById('geo-tol').value) || 0),
+                    points: polyPoints.map(([la, ln]) => ({ lat: la, lng: ln }))
+                };
+            } else {
+                const lat = parseFloat(document.getElementById('geo-lat').value);
+                const lng = parseFloat(document.getElementById('geo-lng').value);
+                if (isNaN(lat) || isNaN(lng)) return showToast("حدد المركز على الخريطة", "error");
+                geoObj = { type: 'circle', name, lat, lng, radius: parseFloat(document.getElementById('geo-radius').value) || 100 };
+            }
+            await set(ref(db, 'geofence'), geoObj);
+            showToast("تم حفظ الرقعة الجغرافية وتحديثها لدى جميع الموظفين!", "success");
+        };
+
+        // ================= الاتصال والبيانات =================
+        onValue(ref(db, ".info/connected"), (snap) => {
+            const dot = document.getElementById('fb-conn-dot');
+            const text = document.getElementById('fb-conn-text');
+            dot.className = snap.val() ? "w-2.5 h-2.5 rounded-full bg-emerald-400" : "w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse";
+            text.textContent = snap.val() ? "متصل مباشرة بـ Firebase Realtime DB (bdbhdhdhd-4ad95)" : "جاري الاتصال...";
+            text.className = snap.val() ? "text-emerald-400 font-semibold" : "text-amber-400";
+        });
+
+        onValue(ref(db, 'employees'), (snap) => { employeesData = snap.val() || {}; refreshUI(); });
+        onValue(ref(db, 'attendance'), (snap) => { attendanceData = snap.val() || {}; refreshUI(); });
+        onValue(ref(db, 'locations'), (snap) => { locationsData = snap.val() || {}; renderLive(); });
+
+        function getTodayStr() {
+            const now = new Date();
+            return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        }
+
+        function refreshUI() {
+            renderDashboard(); renderEmployeesTable(); updateEmpFilterDropdown(); renderLogsTable(); renderLive(); renderProfile();
+        }
+
+        setInterval(() => {
+            const now = new Date();
+            document.getElementById('live-clock').textContent = now.toTimeString().split(' ')[0];
+            document.getElementById('live-date').textContent = getTodayStr();
+        }, 1000);
+
+        // تحديث حالة "متصل/غير متصل" و"آخر ظهور" كل 5 ثوانٍ
+        setInterval(renderLive, 5000);
+
+        // ================= لوحة المراقبة =================
+        function renderDashboard() {
+            const today = getTodayStr();
+            document.getElementById('today-badge').textContent = `تاريخ اليوم: ${today}`;
+            const empList = Object.values(employeesData);
+            const todayLogs = (attendanceData[today] ? Object.values(attendanceData[today]) : []).filter(r => employeesData[r.empId]);
+            document.getElementById('stat-total').textContent = empList.length;
+            document.getElementById('stat-present').textContent = todayLogs.length;
+            document.getElementById('stat-late').textContent = todayLogs.filter(r => r.status === 'late').length;
+            document.getElementById('stat-absent').textContent = Math.max(0, empList.length - todayLogs.length);
+
+            const feed = document.getElementById('live-attendance-feed');
+            if (!todayLogs.length) {
+                feed.innerHTML = `<div class="text-center py-10 text-slate-500 text-sm">لم يدخل أي موظف للرقعة الجغرافية اليوم حتى الآن</div>`;
+                return;
+            }
+            feed.innerHTML = [...todayLogs].sort((a, b) => (b.checkIn || '').localeCompare(a.checkIn || '')).map(rec => `
+                <div class="bg-dark-950/70 border border-white/5 p-4 rounded-2xl flex flex-wrap items-center justify-between gap-4">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-cyan-500/15 text-cyan-400 font-bold flex items-center justify-center">${esc((rec.empName || '?').charAt(0))}</div>
+                        <div>
+                            <div class="font-bold text-white text-sm">${esc(rec.empName)} <span class="text-xs font-mono text-slate-500">(${esc(rec.empId)})</span></div>
+                            <div class="text-xs text-slate-400">${esc(rec.department || 'موظف')} • ${rec.autoMode ? '<span class="text-emerald-400">تسجيل تلقائي GPS</span>' : ''}</div>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <div class="text-left">
+                            <div class="text-xs font-mono text-emerald-400 font-bold">حضور: ${esc(rec.checkIn)}</div>
+                            <div class="text-[11px] text-slate-400">${sessionsOf(rec).length} جلسة • ${calcDuration(rec)}</div>
+                            <div class="text-xs font-mono ${rec.checkOut ? 'text-rose-400' : 'text-cyan-400 animate-pulse'}">${rec.checkOut ? 'انصراف: ' + esc(rec.checkOut) : 'داخل الرقعة الجغرافية'}</div>
+                        </div>
+                        <span class="px-2.5 py-1 rounded-lg ${rec.status === 'late' ? 'bg-amber-500/15 text-amber-400' : 'bg-emerald-500/15 text-emerald-400'} text-xs font-bold">${rec.status === 'late' ? 'متأخر' : 'في الوقت'}</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // ================= مواقع الموظفين المباشرة =================
+        const STATUS = {
+            inside:  { color: '#10b981', label: 'داخل الرقعة' },
+            outside: { color: '#ef4444', label: 'خارج الرقعة' },
+            offline: { color: '#64748b', label: 'غير متصل' },
+            mocked:  { color: '#a855f7', label: 'موقع وهمي مشتبه' }
+        };
+
+        function locStatus(l) {
+            const age = l.ts ? (Date.now() - l.ts) / 1000 : Infinity;
+            // التحديث كل 5 ثوانٍ، فبعد 20 ثانية بلا تحديث يُعتبر غير متصل
+            if (l.online === false || age > 20) return 'offline';
+            if (l.mocked) return 'mocked';
+            return l.inside ? 'inside' : 'outside';
+        }
+
+        function ago(ts) {
+            if (!ts) return 'غير معروف';
+            const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+            if (s < 60) return `قبل ${s} ثانية`;
+            if (s < 3600) return `قبل ${Math.floor(s / 60)} دقيقة`;
+            if (s < 86400) return `قبل ${Math.floor(s / 3600)} ساعة`;
+            return `قبل ${Math.floor(s / 86400)} يوم`;
+        }
+
+        function initLiveMap() {
+            if (liveMap) return;
+            const c = geofenceData ? [geofenceData.lat, geofenceData.lng] : [32.5128, 45.8182];
+            liveMap = L.map('live-map').setView(c, 17);
+            const street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' });
+            const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Esri' });
+            street.addTo(liveMap);
+            L.control.layers({ 'خريطة شوارع': street, 'صورة قمرية': sat }).addTo(liveMap);
+            drawLiveGeofence();
+        }
+
+        function drawLiveGeofence() {
+            if (!liveMap || !geofenceData) return;
+            const g = geofenceData, c = [g.lat, g.lng];
+            if (liveCircle) liveCircle.remove();
+            if (liveHq) liveHq.remove();
+            const style = { color: '#10b981', fillColor: '#10b981', fillOpacity: 0.12, weight: 2 };
+            const pts = g.type === 'polygon' ? toArr(g.points).map(p => [p.lat, p.lng]) : [];
+            liveCircle = pts.length >= 3
+                ? L.polygon(pts, style).addTo(liveMap)
+                : L.circle(c, { ...style, radius: g.radius }).addTo(liveMap);
+            liveHq = L.circleMarker(c, { radius: 7, color: '#06b6d4', fillColor: '#06b6d4', fillOpacity: 1 })
+                .bindTooltip(esc(g.name || 'المقر'), { direction: 'top' }).addTo(liveMap);
+        }
+
+        function popupHtml(id, l, st) {
+            const name = employeesData[id]?.name || l.empName || id;
+            const distLabel = geofenceData?.type === 'polygon' ? 'المسافة عن أقرب جدار' : 'المسافة عن المقر';
+            return `<div style="min-width:170px"><b>${esc(name)}</b> <small>(${esc(id)})</small><br>
+                <span style="color:${STATUS[st].color};font-weight:700">${STATUS[st].label}</span><br>
+                ${l.distance != null ? distLabel + ': ' + Math.round(l.distance) + ' م<br>' : ''}
+                الدقة: ${l.accuracy != null ? Math.round(l.accuracy) + ' م' : '—'}<br>
+                آخر تحديث: ${ago(l.ts)}</div>`;
+        }
+
+        function renderLive() {
+            const entries = Object.entries(locationsData).filter(([id]) => employeesData[id]);
+            const counts = { inside: 0, outside: 0, offline: 0, mocked: 0 };
+            entries.forEach(([, l]) => counts[locStatus(l)]++);
+            const total = Object.keys(employeesData).length;
+            const sum = document.getElementById('live-summary');
+            if (sum) sum.textContent = `داخل الرقعة: ${counts.inside} • خارجها: ${counts.outside} • غير متصل: ${counts.offline} • بلا موقع: ${Math.max(0, total - entries.length)}`;
+
+            // القائمة الجانبية
+            const list = document.getElementById('live-list');
+            if (list) {
+                const sorted = [...entries].sort((a, b) => (employeesData[a[0]]?.name || '').localeCompare(employeesData[b[0]]?.name || '', 'ar'));
+                list.innerHTML = sorted.length ? sorted.map(([id, l]) => {
+                    const st = locStatus(l);
+                    const name = employeesData[id]?.name || l.empName || id;
+                    const distTxt = l.distance != null
+                        ? (geofenceData?.type === 'polygon'
+                            ? (l.inside ? '' : ' • ' + Math.round(l.distance) + ' م عن الجدار')
+                            : ' • ' + Math.round(l.distance) + ' م عن المقر')
+                        : '';
+                    return `<button onclick="focusEmployee('${esc(id)}')" class="w-full text-right bg-dark-950/70 hover:bg-dark-700 border border-white/5 p-3 rounded-2xl flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-full flex items-center justify-center font-extrabold text-white shrink-0" style="background:${STATUS[st].color}">${esc(name.charAt(0))}</div>
+                        <div class="flex-1 min-w-0">
+                            <div class="font-bold text-white text-sm truncate">${esc(name)} <span class="text-[11px] font-mono text-slate-500">${esc(id)}</span></div>
+                            <div class="text-[11px]" style="color:${STATUS[st].color}">${STATUS[st].label}${distTxt}</div>
+                            <div class="text-[11px] text-slate-500">${ago(l.ts)}</div>
+                        </div>
+                    </button>`;
+                }).join('') : `<div class="text-center py-10 text-slate-500 text-sm">لا توجد مواقع بعد. ستظهر عند تسجيل دخول الموظفين من التطبيق.</div>`;
+            }
+
+            // علامات الخريطة
+            if (!liveMap) return;
+            const seen = new Set();
+            entries.forEach(([id, l]) => {
+                if (typeof l.lat !== 'number' || typeof l.lng !== 'number') return;
+                seen.add(id);
+                const st = locStatus(l);
+                const name = employeesData[id]?.name || l.empName || id;
+                const icon = L.divIcon({
+                    className: '',
+                    html: `<div class="emp-pin" style="background:${STATUS[st].color};opacity:${st === 'offline' ? 0.7 : 1}">${esc(name.charAt(0))}</div>`,
+                    iconSize: [34, 34], iconAnchor: [17, 17]
+                });
+                if (liveMarkers[id]) {
+                    liveMarkers[id].setLatLng([l.lat, l.lng]).setIcon(icon).setPopupContent(popupHtml(id, l, st));
+                } else {
+                    liveMarkers[id] = L.marker([l.lat, l.lng], { icon }).bindPopup(popupHtml(id, l, st)).addTo(liveMap);
+                }
+            });
+            Object.keys(liveMarkers).forEach(id => {
+                if (!seen.has(id)) { liveMarkers[id].remove(); delete liveMarkers[id]; }
+            });
+        }
+
+        window.focusEmployee = (id) => {
+            initLiveMap();
+            const m = liveMarkers[id];
+            if (!m) return;
+            liveMap.setView(m.getLatLng(), Math.max(liveMap.getZoom(), 18));
+            m.openPopup();
+        };
+
+        window.fitAllEmployees = () => {
+            initLiveMap();
+            const pts = Object.values(liveMarkers).map(m => m.getLatLng());
+            if (geofenceData) {
+                if (geofenceData.type === 'polygon') toArr(geofenceData.points).forEach(p => pts.push(L.latLng(p.lat, p.lng)));
+                else pts.push(L.latLng(geofenceData.lat, geofenceData.lng));
+            }
+            if (!pts.length) return showToast("لا توجد مواقع لعرضها", "info");
+            liveMap.fitBounds(L.latLngBounds(pts), { padding: [50, 50], maxZoom: 19 });
+        };
+
+        // ================= الموظفون =================
+        window.renderEmployeesTable = function() {
+            const q = (document.getElementById('emp-search')?.value || '').toLowerCase();
+            const list = Object.values(employeesData).filter(e => (e.name || '').toLowerCase().includes(q) || (e.empId || '').toLowerCase().includes(q));
+            document.getElementById('employees-tbody').innerHTML = list.length ? list.map(emp => `
+                <tr>
+                    <td class="py-3.5 px-4 font-mono text-xs text-cyan-400 font-bold">${esc(emp.empId)}</td>
+                    <td class="py-3.5 px-4 font-bold text-white">${esc(emp.name)}</td>
+                    <td class="py-3.5 px-4"><div class="text-xs text-slate-200">${esc(emp.department)}</div><div class="text-[11px] text-slate-500">${esc(emp.jobTitle)}</div></td>
+                    <td class="py-3.5 px-4 font-mono text-xs text-amber-400">${esc(emp.shiftStart)}</td>
+                    <td class="py-3.5 px-4 font-mono text-xs text-slate-300">${esc(emp.password)}</td>
+                    <td class="py-3.5 px-4 text-center">
+                        <button onclick="openProfile('${esc(emp.empId)}')" title="بروفايل وجلسات التواجد" class="p-2 rounded-lg bg-emerald-500/15 text-emerald-400 text-xs"><i class="fa-solid fa-id-badge"></i></button>
+                        <button onclick="openEmployeeModal('${esc(emp.empId)}')" class="p-2 rounded-lg bg-cyan-500/15 text-cyan-400 text-xs"><i class="fa-solid fa-pen"></i></button>
+                        <button onclick="deleteEmployee('${esc(emp.empId)}')" class="p-2 rounded-lg bg-rose-500/15 text-rose-400 text-xs"><i class="fa-solid fa-trash"></i></button>
+                    </td>
+                </tr>
+            `).join('') : `<tr><td colspan="6" class="text-center py-8 text-slate-500">لا يوجد موظفون</td></tr>`;
+        };
+
+        function updateEmpFilterDropdown() {
+            const select = document.getElementById('filter-emp');
+            const cur = select.value;
+            select.innerHTML = `<option value="all">جميع الموظفين</option>` + Object.values(employeesData).map(e => `<option value="${esc(e.empId)}">${esc(e.name)} (${esc(e.empId)})</option>`).join('');
+            select.value = cur || 'all';
+        }
+
+        // ================= السجل =================
+        window.renderLogsTable = function() {
+            const fDate = document.getElementById('filter-date').value;
+            const fEmp = document.getElementById('filter-emp').value;
+            let records = [];
+            Object.values(attendanceData).forEach(empMap => { if (empMap) Object.values(empMap).forEach(r => records.push(r)); });
+            records = records.filter(r => (!fDate || r.date === fDate) && (fEmp === 'all' || r.empId === fEmp))
+                .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.checkIn || '').localeCompare(a.checkIn || ''));
+            document.getElementById('logs-tbody').innerHTML = records.length ? records.map(r => `
+                <tr>
+                    <td class="py-3.5 px-4 font-mono text-xs">${esc(r.date)}</td>
+                    <td class="py-3.5 px-4 font-bold text-white"><button onclick="openProfile('${esc(r.empId)}')" class="hover:text-cyan-400 underline decoration-dotted">${esc(r.empName)} (${esc(r.empId)})</button></td>
+                    <td class="py-3.5 px-4 font-mono text-xs text-emerald-400">${esc(r.checkIn)}</td>
+                    <td class="py-3.5 px-4 font-mono text-xs text-rose-400">${esc(r.checkOut || 'مستمر')}</td>
+                    <td class="py-3.5 px-4 font-mono text-xs">${calcDuration(r)} <span class="text-[10px] text-slate-500">(${sessionsOf(r).length} جلسة)</span></td>
+                    <td class="py-3.5 px-4 text-xs">${r.status === 'late' ? 'متأخر' : 'في الوقت'}</td>
+                    <td class="py-3.5 px-4 text-center"><button onclick="deleteAttendanceRecord('${esc(r.date)}', '${esc(r.empId)}')" class="p-2 rounded-lg bg-rose-500/15 text-rose-400 text-xs"><i class="fa-solid fa-trash-can"></i></button></td>
+                </tr>
+            `).join('') : `<tr><td colspan="7" class="text-center py-8 text-slate-500">لا توجد سجلات</td></tr>`;
+        };
+
+        window.clearLogFilters = () => { document.getElementById('filter-date').value = ''; document.getElementById('filter-emp').value = 'all'; renderLogsTable(); };
+
+        window.exportLogsToCSV = () => {
+            const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+            const rows = [["Date", "Employee ID", "Employee Name", "Check In", "Check Out", "Duration", "Sessions", "Status"]];
+            Object.values(attendanceData).forEach(m => Object.values(m || {}).forEach(r =>
+                rows.push([r.date, r.empId, r.empName, r.checkIn, r.checkOut || "", calcDuration(r), sessionsOf(r).length, r.status])));
+            const blob = new Blob(["\uFEFF" + rows.map(r => r.map(q).join(",")).join("\n")], { type: "text/csv;charset=utf-8" });
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = `attendance_${getTodayStr()}.csv`;
+            link.click();
+            URL.revokeObjectURL(link.href);
+        };
+
+        // ================= بروفايل الموظف: جلسات التواجد =================
+        let profileEmpId = null;
+        const profileOpen = new Set();
+
+        window.openProfile = (id) => {
+            profileEmpId = id;
+            profileOpen.clear(); profileOpen.add(getTodayStr());
+            document.getElementById('profile-modal').classList.remove('hidden');
+            renderProfile();
+        };
+        window.closeProfile = () => { profileEmpId = null; document.getElementById('profile-modal').classList.add('hidden'); };
+        window.toggleDay = (d, open) => { open ? profileOpen.add(d) : profileOpen.delete(d); };
+
+        function renderProfile() {
+            const body = document.getElementById('profile-body');
+            if (!profileEmpId || !body) return;
+            const id = profileEmpId, emp = employeesData[id] || {};
+            const today = getTodayStr();
+            document.getElementById('profile-title').textContent = `${emp.name || id} (${id})`;
+
+            const dates = Object.keys(attendanceData).filter(d => attendanceData[d] && attendanceData[d][id]).sort().reverse().slice(0, 30);
+            const dayTotal = (d) => sessionsOf(attendanceData[d][id]).reduce((a, s) => a + sessSecs(s, d === today), 0);
+            const todaySess = attendanceData[today] && attendanceData[today][id] ? sessionsOf(attendanceData[today][id]) : [];
+            const insideNow = todaySess.some(s => !s.out);
+            const allTotal = dates.reduce((a, d) => a + dayTotal(d), 0);
+
+            const sessRow = (s, i, isToday) => {
+                const open = !s.out, live = open && isToday;
+                const col = live ? '#10b981' : '#06b6d4';
+                return `<div class="flex items-center gap-3 bg-dark-950/70 border ${live ? 'border-emerald-500/40' : 'border-white/5'} rounded-xl p-3">
+                    <div class="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0" style="background:${col}26;color:${col}">${i + 1}</div>
+                    <div class="flex-1 text-xs font-mono">
+                        <div class="text-emerald-400">دخول: ${esc(s.in)}</div>
+                        <div class="${open ? (live ? 'text-cyan-400 animate-pulse' : 'text-slate-500') : 'text-amber-400'}">${open ? (live ? 'ما زال داخل المؤسسة' : 'لم يُسجَّل خروج') : 'خروج: ' + esc(s.out)}</div>
+                    </div>
+                    <div class="px-2.5 py-1 rounded-lg text-xs font-bold" style="background:${col}1f;color:${col}">${open && !isToday ? '—' : fmtDur(sessSecs(s, isToday))}</div>
+                </div>`;
+            };
+
+            body.innerHTML = `
+                <div class="bg-dark-950/70 border ${insideNow ? 'border-emerald-500/50' : 'border-white/10'} rounded-2xl p-4 text-center">
+                    <div class="text-xs font-bold ${insideNow ? 'text-emerald-400' : 'text-slate-400'}">${insideNow ? '● داخل المؤسسة الآن' : '○ خارج المؤسسة'}</div>
+                    <div class="text-[11px] text-slate-400 mt-2">إجمالي مدة التواجد اليوم</div>
+                    <div class="text-3xl font-extrabold text-cyan-400 my-1">${fmtDur(todaySess.reduce((a, s) => a + sessSecs(s, true), 0))}</div>
+                    <div class="text-[11px] text-slate-400">${todaySess.length} جلسة اليوم • مجموع آخر ${dates.length} يوم: ${fmtDur(allTotal)}</div>
+                </div>
+                ${dates.length ? dates.map(d => {
+                    const list = sessionsOf(attendanceData[d][id]);
+                    const isToday = d === today;
+                    return `<details data-d="${esc(d)}" ${profileOpen.has(d) ? 'open' : ''} ontoggle="toggleDay('${esc(d)}', this.open)" class="bg-dark-950/50 border border-white/5 rounded-2xl">
+                        <summary class="cursor-pointer px-4 py-3 flex items-center justify-between text-sm">
+                            <span class="font-bold text-white">${isToday ? 'اليوم ' : ''}<span class="font-mono text-xs text-slate-400">${esc(d)}</span> <span class="text-[11px] text-slate-500">(${list.length} جلسة)</span></span>
+                            <span class="font-bold text-cyan-400 text-xs">${fmtDur(dayTotal(d))}</span>
+                        </summary>
+                        <div class="px-3 pb-3 space-y-2">${list.length ? list.map((s, i) => sessRow(s, i, isToday)).join('') : '<div class="text-xs text-slate-500 px-2 py-2">لا توجد جلسات مفصلة لهذا اليوم (سجل قديم)</div>'}</div>
+                    </details>`;
+                }).join('') : '<div class="text-center py-8 text-slate-500 text-sm">لا توجد سجلات تواجد لهذا الموظف</div>'}`;
+        }
+        // عدّاد الجلسة المفتوحة يتحرك كل ثانية أثناء فتح البروفايل
+        setInterval(() => { if (profileEmpId) renderProfile(); }, 1000);
+
+        // ================= نافذة الموظف =================
+        window.openEmployeeModal = (empId = null) => {
+            const idInput = document.getElementById('form-empId');
+            if (empId && employeesData[empId]) {
+                const e = employeesData[empId];
+                document.getElementById('modal-title').textContent = 'تعديل بيانات موظف';
+                idInput.value = e.empId; idInput.readOnly = true;
+                document.getElementById('form-name').value = e.name;
+                document.getElementById('form-dept').value = e.department;
+                document.getElementById('form-job').value = e.jobTitle;
+                document.getElementById('form-shift').value = e.shiftStart;
+                document.getElementById('form-pass').value = e.password;
+            } else {
+                document.getElementById('modal-title').textContent = 'إضافة موظف جديد';
+                let n = 101; while (employeesData['EMP' + n]) n++;
+                idInput.value = 'EMP' + n; idInput.readOnly = false;
+                document.getElementById('form-name').value = ''; document.getElementById('form-dept').value = '';
+                document.getElementById('form-job').value = ''; document.getElementById('form-shift').value = '08:30'; document.getElementById('form-pass').value = '123';
+            }
+            document.getElementById('emp-modal').classList.remove('hidden');
+        };
+        window.closeEmployeeModal = () => document.getElementById('emp-modal').classList.add('hidden');
+
+        window.handleSaveEmployee = async (e) => {
+            e.preventDefault();
+            const empId = document.getElementById('form-empId').value.trim().toUpperCase();
+            await set(ref(db, `employees/${empId}`), {
+                empId, name: document.getElementById('form-name').value.trim(),
+                department: document.getElementById('form-dept').value.trim(),
+                jobTitle: document.getElementById('form-job').value.trim(),
+                shiftStart: document.getElementById('form-shift').value,
+                password: document.getElementById('form-pass').value.trim()
+            });
+            closeEmployeeModal(); showToast("تم الحفظ في Firebase", "success");
+        };
+
+        window.deleteEmployee = async (empId) => {
+            if (!confirm(`حذف الموظف ${empId}؟`)) return;
+            await remove(ref(db, `employees/${empId}`));
+            await remove(ref(db, `locations/${empId}`));
+            showToast("تم الحذف", "warning");
+        };
+        window.deleteAttendanceRecord = async (d, id) => { await remove(ref(db, `attendance/${d}/${id}`)); showToast("تم حذف السجل", "info"); };
+
+        window.seedSampleEmployees = async () => {
+            await update(ref(db, 'employees'), {
+                "EMP101": { empId: "EMP101", name: "أحمد علي حسين", department: "تقنية المعلومات", jobTitle: "مطور برمجيات", shiftStart: "08:30", password: "123" },
+                "EMP102": { empId: "EMP102", name: "سارة محمود كاظم", department: "الموارد البشرية", jobTitle: "أخصائية موارد بشرية", shiftStart: "08:30", password: "123" },
+                "EMP103": { empId: "EMP103", name: "حيدر جاسم", department: "المحاسبة", jobTitle: "محاسب", shiftStart: "08:30", password: "123" }
+            });
+            showToast("تمت إضافة الموظفين التجريبيين", "success");
+        };
+
+        // ================= التنقل =================
+        window.switchTab = (tab) => {
+            currentTab = tab;
+            ['dashboard', 'live', 'geofence', 'employees', 'logs', 'settings'].forEach(t => {
+                document.getElementById(`section-${t}`).classList.add('hidden');
+                document.getElementById(`nav-${t}`).className = "tab-btn px-4 py-2.5 rounded-xl text-sm font-bold text-slate-400 hover:bg-dark-800 hover:text-white flex items-center gap-2";
+            });
+            document.getElementById(`section-${tab}`).classList.remove('hidden');
+            document.getElementById(`nav-${tab}`).className = "tab-btn px-4 py-2.5 rounded-xl text-sm font-bold bg-dark-700 text-cyan-400 border border-cyan-500/30 flex items-center gap-2";
+
+            if (tab === 'geofence') {
+                setTimeout(() => {
+                    const lat = parseFloat(document.getElementById('geo-lat').value) || 32.5128;
+                    const lng = parseFloat(document.getElementById('geo-lng').value) || 45.8182;
+                    const r = parseFloat(document.getElementById('geo-radius').value) || 100;
+                    initMap(lat, lng, r);
+                    map.invalidateSize();
+                    if (geoMode === 'polygon' && polyPoints.length >= 3) {
+                        map.fitBounds(L.latLngBounds(polyPoints), { padding: [40, 40], maxZoom: 19 });
+                    }
+                }, 100);
+            }
+            if (tab === 'live') {
+                setTimeout(() => {
+                    initLiveMap();
+                    liveMap.invalidateSize();
+                    renderLive();
+                    if (!window.__liveFitted && Object.keys(liveMarkers).length) { window.__liveFitted = true; fitAllEmployees(); }
+                }, 100);
+            }
+        };
+
+        window.showToast = (msg, type = 'success') => {
+            const colors = { success: 'border-emerald-500 text-emerald-400', error: 'border-rose-500 text-rose-400', warning: 'border-amber-500 text-amber-400', info: 'border-cyan-500 text-cyan-400' };
+            const c = document.getElementById('toast-container');
+            const el = document.createElement('div');
+            el.className = `pointer-events-auto bg-dark-800 border ${colors[type] || colors.success} px-4 py-3 rounded-2xl shadow-2xl text-xs font-bold`;
+            el.textContent = msg; c.appendChild(el); setTimeout(() => el.remove(), 3500);
+        };
+
+        // حالة أولية لأزرار وضع الرسم
+        setGeoMode(geoMode);
+    </script>
+</body>
+</html>
